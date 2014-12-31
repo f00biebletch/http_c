@@ -26,7 +26,7 @@ typedef struct http_resp_t {
   char *body;
 } http_resp_t;
 
-http_req_t *request(char *p);
+http_req_t *request(const char *p);
 http_resp_t *response(http_req_t *h);
 
 void dump_request(http_req_t *http);
