@@ -5,13 +5,9 @@
 
 #define CL "content-length"
 
-typedef struct pair_t {
-  char *key;
-  char *val;
-} pair_t;
-
 typedef struct hdr_t {
-  pair_t *val;
+  char *key;
+  char *value;
   struct hdr_t *next;
 } hdr_t;
 
@@ -33,21 +29,12 @@ void free_http(http_req_t *http);
 int get_len(http_req_t *http);
 
 void parse_body(char *p, http_req_t *http);
+void parse_hdr(char *buf, hdr_t *hdr);
 hdr_t *do_parse_hdrs(char **p);
-pair_t *parse_pair(char *s);
 void free_hdrs(hdr_t *h);
 void dump_hdrs(hdr_t *h);
 
 int main(int argc, char **argv) {
-  /*  pair_t *e = parse_pair("content-length: 666");
-  printf("got %s to %s\n", e->key, e->val);
-  free(e);
-
-  char *str = "conTENT-length: 666\r\ndork:2\r\n";
-  hdr_t *hdrs = do_parse_hdrs(str);
-  dump_hdrs(hdrs);
-  free_hdrs(hdrs);
-  */
   char *str2 = "GET HTTP/1.1 /foo/bar\r\ncontent-lenGTH: 10\r\ndork:2\r\n\r\n0123456789";
   http_req_t *http = parse_http(str2);
 
@@ -115,13 +102,13 @@ hdr_t *do_parse_hdrs(char **p) {
   *p+=2;
 
   hdr_t *hdr = (hdr_t *) malloc(sizeof(hdr_t));
-  hdr->val = parse_pair(line);
+  parse_hdr(line, hdr);
   hdr->next = do_parse_hdrs(p);
 
   return hdr;
 }
 
-pair_t *parse_pair(char *buf) {
+void parse_hdr(char *buf, hdr_t *hdr) {
   char *line = strdup(buf);
   char *key = strsep(&line, ":");
   char *val = strsep(&line, ":");
@@ -129,13 +116,10 @@ pair_t *parse_pair(char *buf) {
   char *k = key;
   for ( ; *k; ++k) *k = tolower(*k);
 
-  pair_t *entry = (pair_t *) malloc(sizeof(pair_t));
-  entry->key = key;
-  entry->val = val;
+  hdr->key = key;
+  hdr->value = val;
 
   free(line);
-
-  return entry;
 }
 
 void free_http(http_req_t *http) {
@@ -150,7 +134,6 @@ void free_hdrs(hdr_t *h) {
   hdr_t *cur = h;
   while (cur) {
     hdr_t *tmp = cur->next;
-    free(cur->val);
     free(cur);
     cur = tmp;
   }
@@ -159,7 +142,7 @@ void free_hdrs(hdr_t *h) {
 void dump_hdrs(hdr_t *h) {
   hdr_t *cur = h;
   while (cur) {
-    printf("%s :: %s\n", cur->val->key, cur->val->val);
+    printf("%s :: %s\n", cur->key, cur->value);
     cur = cur->next;
   }
 }
@@ -182,8 +165,8 @@ int get_len(http_req_t *http) {
   hdr_t *cur = http->headers;
   int len = 0;
   while (cur) {
-    if (strcmp(CL, cur->val->key) == 0) {
-      len = atoi(cur->val->val);
+    if (strcmp(CL, cur->key) == 0) {
+      len = atoi(cur->value);
     }
     cur = cur->next;
   }
