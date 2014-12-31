@@ -1,7 +1,7 @@
 #include "http.h"
 
 static void parse_req(const char **p, http_req_t *http);
-static void skip_line(const char **p);
+static void skip_crlf(const char **p);
 static void parse_hdrs(const char **p, http_req_t *http);
 static int get_len(http_req_t *http);
 static void parse_body(const char *p, http_req_t *http);
@@ -48,7 +48,7 @@ http_req_t *request(const char *buf) {
 
   parse_req(&p, http);
   parse_hdrs(&p, http);
-  skip_line(&p);
+  skip_crlf(&p);
   parse_body(p, http);
 
   return http;
@@ -122,7 +122,7 @@ static void consume(const char **src, char *dest) {
   }
 }
 
-static void skip_line(const char **p) {
+static void skip_crlf(const char **p) {
   while (**p != '\0' && **p != '\r') (*p)++;
   *p+=2;
 }
@@ -213,6 +213,7 @@ static int get_len(http_req_t *http) {
   while (cur) {
     if (strcmp(CL, cur->key) == 0) {
       len = atoi(cur->value);
+      break;
     }
     cur = cur->next;
   }
