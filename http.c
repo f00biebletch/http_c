@@ -13,20 +13,33 @@ static void consume(char **src, char *dest);
 
 int main(int argc, char **argv) {
   char *strs[] = {
-    "GET HTTP/1.1 /foo/bar\r\ncontent-lenGTH: 10\r\ndork:2\r\n\r\n0123456789",
-    "GET HTTP/1.1 /foo/bar\r\ndork:bigTIMES\r\n\r\n",
-    "POST HTTP/1.1 /foo/bar/quux/bletch.jsp\r\ncontent-lenGTH: 2\r\nDORK:2\r\n\r\n69",
-    "GET HTTP/1.1 /foo/bar\r\n\r\n\r\n"
+    "GET /foo/bar HTTP/1.1\r\ncontent-lenGTH: 10\r\ndork:2\r\n\r\n0123456789",
+    "GET /foo/bar HTTP/1.1\r\ndork:bigTIMES\r\n\r\n",
+    "POST /foo/bar/quux/bletch.jsp HTTP/1.1\r\ncontent-lenGTH: 2\r\nDORK:2\r\n\r\n69",
+    "GET /foo/bar HTTP/1.1\r\n\r\n\r\n"
   };
 
   for (int i=0; i<4; i++) {
-    http_req_t *http = parse_http(strs[i]);
-    dump_http(http);
-    free_http(http);
+    http_req_t *http = request(strs[i]);
+    //http_resp_t *resp = response(http);
+    dump_request(http);
+    //dump_response(resp);
+    free_request(http);
+    //free_response(resp);
   }
 }
 
-http_req_t *parse_http(char *buf) {
+http_resp_t *response(http_req_t *req) {
+  http_resp_t *resp = (http_resp_t *)malloc(sizeof(http_resp_t));
+  resp->version = strdup(req->version);
+  resp->status = "200 OK";
+  //resp->headers = req->headers;
+  resp->body = strdup(req->body);
+  
+  return resp;
+}
+
+http_req_t *request(char *buf) {
 
   http_req_t *http = (http_req_t *)malloc(sizeof(http_req_t));
   char *p = buf;
@@ -39,7 +52,7 @@ http_req_t *parse_http(char *buf) {
   return http;
 }
 
-void dump_http(http_req_t *http) {
+void dump_request(http_req_t *http) {
   printf("method: %s\n", http->method);
   printf("version: %s\n", http->version);
   printf("resource: %s\n", http->resource);
@@ -47,12 +60,23 @@ void dump_http(http_req_t *http) {
   printf("body: %s\n", http->body);
 }
 
-void free_http(http_req_t *http) {
+void dump_response(http_resp_t *http) {
+  printf("version: %s\n", http->version);
+  printf("status: %s\n", http->status);
+  dump_hdrs(http->headers);
+  printf("body: %s\n", http->body);
+}
+
+void free_request(http_req_t *http) {
   free(http->method);
   free(http->version);
   free(http->resource);
   free(http->body);
   free_hdrs(http->headers);
+  free(http);
+}
+
+void free_response(http_resp_t *http) {
   free(http);
 }
 
@@ -62,12 +86,12 @@ static void parse_req(char **p, http_req_t *http) {
   consume(p, m);
   (*p)++;
 
-  char *v = (char *)malloc(32);
-  consume(p, v);
-  (*p)++;
-
   char *r = (char *)malloc(2048);
   consume(p, r);
+  (*p)++;
+
+  char *v = (char *)malloc(32);
+  consume(p, v);
   *p+=2;
 
   http->method = m;

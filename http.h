@@ -13,12 +13,23 @@ typedef struct hdr_t {
 
 typedef struct http_req_t {
   char *method;
-  char *version;
   char *resource;
+  char *version;
   hdr_t *headers;
   char *body;
 } http_req_t;
 
-http_req_t *parse_http(char *p);
-void dump_http(http_req_t *http);
-void free_http(http_req_t *http);
+typedef struct http_resp_t {
+  char *version;
+  char *status;
+  hdr_t *headers;
+  char *body;
+} http_resp_t;
+
+http_req_t *request(char *p);
+http_resp_t *response(http_req_t *h);
+
+void dump_request(http_req_t *http);
+void free_request(http_req_t *http);
+void dump_response(http_resp_t *http);
+void free_response(http_resp_t *http);
