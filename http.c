@@ -44,15 +44,11 @@ http_resp_t *response(http_req_t *req, char *status) {
 char *response_to_s(http_resp_t *resp) {
   char *buf = (char *) malloc(2048);
 
-  printf("buf1 = %s\n", buf);
   sprintf(buf, "%s %s\r\n", resp->version, resp->status);
-  printf("buf2 = %s\n", buf);
   char *hd = hdrs_to_s(resp->headers);
   strcat(buf, hd);
-  printf("buf3 = %s\n", buf);
   strcat(buf, "\r\n");
   strcat(buf, resp->body);
-  printf("buf4 = %s\n", buf);
   free(hd);
 
   return buf;

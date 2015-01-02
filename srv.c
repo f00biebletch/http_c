@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <ev.h>
 #include "http.h"
 
@@ -37,41 +38,48 @@ static inline int setnonblock(int fd) {
 int main(int argc, char **argv)
 {
   struct ev_loop *loop = ev_default_loop(0);
-  int sd;
-  struct sockaddr_in addr;
-  int addr_len = sizeof(addr);
-  struct ev_io w_accept;
+  struct sockaddr_in listen_addr;
 
-  // Create server socket
-  if( (sd = socket(PF_INET, SOCK_STREAM, 0)) < 0 ) {
-    perror("socket error");
+  memset(&listen_addr, 0, sizeof(listen_addr));
+  listen_addr.sin_family = AF_INET;
+  listen_addr.sin_port = htons(PORT_NO);
+  listen_addr.sin_addr.s_addr = INADDR_ANY;
+
+
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    perror("listen failed(socket)");
     return -1;
   }
 
-  bzero(&addr, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(PORT_NO);
-  addr.sin_addr.s_addr = INADDR_ANY;
-
-  // Bind socket to address
-  if (bind(sd, (struct sockaddr*) &addr, sizeof(addr)) != 0) {
-    perror("bind error");
-  }
-
-  // Start listing on the socket
-  if (listen(sd, 2) < 0) {
-    perror("listen error");
+  int reuseaddr_on = 1;
+  if (setsockopt(fd,
+		 SOL_SOCKET,
+		 SO_REUSEADDR,
+		 &reuseaddr_on,
+		 sizeof(listen_addr)) == -1) {
+    perror("setsockopt failed");
     return -1;
   }
 
-  // Initialize and start a watcher to accepts client requests
-  ev_io_init(&w_accept, accept_cb, sd, EV_READ);
-  ev_io_start(loop, &w_accept);
-
-  // Start infinite loop
-  while (1) {
-    ev_loop(loop, 0);
+  if (bind(fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) < 0) {
+    perror("bind failed");
+    return -1;
   }
+  if (listen(fd, 5) < 0) {
+    perror("listen failed(listen)");
+    return -1;
+  }
+  if (setnonblock(fd) < 0) {
+    perror("failed to set server socket to nonblock");
+    return -1;
+  }
+
+  client_t *main_client = (client_t *)malloc(sizeof(client_t));
+  ev_io_init(&main_client->ev_accept, accept_cb, fd, EV_READ);
+  ev_io_start(loop, &main_client->ev_accept);
+
+  ev_loop(loop, 0);
 
   return 0;
 }
@@ -79,81 +87,100 @@ int main(int argc, char **argv)
 /* Accept client requests */
 void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
+ client_t *main_client =
+   (client_t *)
+   (((char *) watcher) - offsetof(struct client_t, ev_accept));
+
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
-  int client_sd;
-  struct ev_io *w_client = (struct ev_io*) malloc (sizeof(struct ev_io));
 
-  if(EV_ERROR & revents)
-    {
-      perror("got invalid event");
-      return;
-    }
+  int client_fd = accept(watcher->fd, (struct sockaddr *)&client_addr, &client_len);
 
-  // Accept client request
-  client_sd = accept(watcher->fd, (struct sockaddr *)&client_addr, &client_len);
-
-  if (client_sd < 0)
-    {
-      perror("accept error");
-      return;
-    }
+  if (client_fd < 0) {
+    perror("accept error");
+    return;
+  }
 
   total_clients ++; // Increment total_clients count
   printf("Successfully connected with client.\n");
   printf("%d client(s) connected.\n", total_clients);
 
-  // Initialize and start watcher to read client requests
-  ev_io_init(w_client, read_cb, client_sd, EV_READ);
-  ev_io_start(loop, w_client);
-}
-
-void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents){
-  char buffer[BUFFER_SIZE];
-  ssize_t read;
-
-  if(EV_ERROR & revents) {
-    perror("got invalid event");
+  if (setnonblock(client_fd) < 0) {
+    perror("failed to set client socket to nonblock");
     return;
   }
 
-  read = recv(watcher->fd, buffer, BUFFER_SIZE, 0);
+  client_t *client = (client_t *)malloc(sizeof(client_t));
+  client->fd = client_fd;
+  ev_io_init(&client->ev_read, read_cb, client->fd, EV_READ);
+  ev_io_start(loop, &client->ev_read);
+}
+
+void read_cb(struct ev_loop *loop, struct ev_io *w, int revents){
+  char buffer[BUFFER_SIZE];
+  ssize_t read;
+
+  if(!(EV_READ & revents)) {
+    ev_io_stop(EV_A_ w);
+    return;
+  }
+
+  client_t *client =
+    (client_t *)
+    (((char *) w) - offsetof(struct client_t, ev_read));
+
+  read = recv(w->fd, buffer, BUFFER_SIZE, 0);
   if(read < 0) {
     perror("read error");
     return;
   }
 
   if(read == 0) {
-    // Stop and free watchet if client socket is closing
-    ev_io_stop(loop,watcher);
-    free(watcher);
+    ev_io_stop(loop,w);
+    free(w);
     perror("peer might closing");
     total_clients --; // Decrement total_clients count
     printf("%d client(s) connected.\n", total_clients);
     return;
   }
-  else {
-    printf("message:%s\n",buffer);
-  }
 
+  client->buf = (char *)malloc(read);
+  memcpy(client->buf, buffer, read);
   const char *p = &buffer[0];
-  printf("get req\n");
   http_req_t *req = request(p);
   dump_request(req);
-  printf("get resp\n");
+  client->request = req;
+  memset(buffer, 0, read);
+
+  // Initialize and start watcher to write client requests
+  ev_io_stop(EV_A_ w);
+  ev_io_init(&client->ev_write, write_cb, w->fd, EV_WRITE);
+  ev_io_start(loop, &client->ev_write);
+}
+
+void write_cb(struct ev_loop *loop, struct ev_io *w, int revents){
+
+  if (!(revents & EV_WRITE)) {
+    ev_io_stop(EV_A_ w);
+    return;
+  }
+  client_t *client =
+    (client_t *)
+    (((char *) w) - offsetof(struct client_t, ev_write));
+  http_req_t *req = client->request;
+
+  dump_request(req);
   http_resp_t *resp = response(req, "200 OK");
   dump_response(resp);
-  printf("to_s\n");
+  
   char *data = response_to_s(resp);
 
-  // Send Message bach to the client
-  send(watcher->fd, data, read, 0);
+  send(client->fd, data, strlen(data), 0);
+
   free_request(req);
   free_response(resp);
   free(data);
-  bzero(buffer, read);
-  close(watcher->fd);
-}
+  close(client->fd);
 
-void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents){
+  ev_io_stop(EV_A_ w);
 }
