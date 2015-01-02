@@ -11,8 +11,9 @@ static void free_hdrs(hdr_t *h);
 static void dump_hdrs(hdr_t *h);
 static void consume(const char **src, char *dest);
 static hdr_t *cp_hdrs(hdr_t *s);
+static char *hdrs_to_s(hdr_t *h);
 
-int main(int argc, char **argv) {
+void test(int argc, char **argv) {
   const char *strs[] = {
     "GET /foo/bar HTTP/1.1\r\ncontent-lenGTH: 10\r\ndork:2\r\n\r\n0123456789",
     "GET /foo/bar HTTP/1.1\r\ndork:bigTIMES\r\n\r\n",
@@ -22,7 +23,7 @@ int main(int argc, char **argv) {
 
   for (int i=0; i<4; i++) {
     http_req_t *http = request(strs[i]);
-    http_resp_t *resp = response(http);
+    http_resp_t *resp = response(http, "200 OK");
     dump_request(http);
     dump_response(resp);
     free_request(http);
@@ -30,15 +31,31 @@ int main(int argc, char **argv) {
   }
 }
 
-http_resp_t *response(http_req_t *req) {
+http_resp_t *response(http_req_t *req, char *status) {
   http_resp_t *resp = (http_resp_t *)malloc(sizeof(http_resp_t));
   resp->version = strdup(req->version);
-  resp->status = (char *)malloc(64);
-  strcpy(resp->status, "200 OK");
+  resp->status = strdup(status);
   resp->headers = cp_hdrs(req->headers);
   resp->body = strdup(req->body);
   
   return resp;
+}
+
+char *response_to_s(http_resp_t *resp) {
+  char *buf = (char *) malloc(2048);
+
+  printf("buf1 = %s\n", buf);
+  sprintf(buf, "%s %s\r\n", resp->version, resp->status);
+  printf("buf2 = %s\n", buf);
+  char *hd = hdrs_to_s(resp->headers);
+  strcat(buf, hd);
+  printf("buf3 = %s\n", buf);
+  strcat(buf, "\r\n");
+  strcat(buf, resp->body);
+  printf("buf4 = %s\n", buf);
+  free(hd);
+
+  return buf;
 }
 
 http_req_t *request(const char *buf) {
@@ -98,14 +115,17 @@ void free_response(http_resp_t *http) {
 static void parse_req(const char **p, http_req_t *http) {
 
   char *m = (char *)malloc(32);
+  memset(m, 0, 32);
   consume(p, m);
   (*p)++;
 
-  char *r = (char *)malloc(2048);
+  char *r = (char *)malloc(1024);
+  memset(r, 0, 1024);
   consume(p, r);
   (*p)++;
 
   char *v = (char *)malloc(32);
+  memset(v, 0, 32);
   consume(p, v);
   *p+=2;
 
@@ -120,6 +140,8 @@ static void consume(const char **src, char *dest) {
     dest++;
     (*src)++;
   }
+  dest++;
+  *dest = '\0';
 }
 
 static void skip_crlf(const char **p) {
@@ -153,16 +175,22 @@ static hdr_t *do_parse_hdrs(const char **p) {
 static void parse_hdr(const char *p, hdr_t *hdr) {
 
   char *key = (char *)malloc(64);
+  memset(key, 0, 64);
   char *k = key;
   while (*p != '\0' && *p != ':') {
     *k++ = tolower(*p);
     p++;
   }
+  k++;
+  *k = '\0';
   p++;
 
   char *val = (char *)malloc(64);
+  memset(val, 0, 64);
   char *v = val;
   while (*p != '\0') *v++ = *p++;
+  v++;
+  *v = '\0';
 
   hdr->key = key;
   hdr->value = val;
@@ -199,6 +227,19 @@ static void dump_hdrs(hdr_t *h) {
     printf("==> %s : %s\n", cur->key, cur->value);
     cur = cur->next;
   }
+}
+
+static char *hdrs_to_s(hdr_t *h) {
+  char *buf = (char *)malloc(2048);
+  hdr_t *cur = h;
+  while (cur) {
+    strcat(buf, cur->key);
+    strcat(buf, ":");
+    strcat(buf, cur->value);
+    strcat(buf, "\r\n");
+    cur = cur->next;
+  }
+  return buf;
 }
 
 static void parse_body(const char *p, http_req_t *http) {
