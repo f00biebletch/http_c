@@ -8,11 +8,8 @@
 #include <ev.h>
 #include "http.h"
 
-// taken from http://codefundas.blogspot.com/2010/09/create-tcp-echo-server-using-libev.html
 #define PORT_NO 6666
 #define BUFFER_SIZE 4096
-
-int total_clients = 0;  // Total number of connected clients
 
 void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
@@ -23,7 +20,7 @@ typedef struct client_t {
   ev_io ev_accept;
   ev_io ev_read;
   ev_io ev_write;
-  char *buf;
+  char *raw_req;
   http_req_t *request;
 } client_t;
 
@@ -101,10 +98,6 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
     return;
   }
 
-  total_clients ++; // Increment total_clients count
-  printf("Successfully connected with client.\n");
-  printf("%d client(s) connected.\n", total_clients);
-
   if (setnonblock(client_fd) < 0) {
     perror("failed to set client socket to nonblock");
     return;
@@ -118,7 +111,6 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 void read_cb(struct ev_loop *loop, struct ev_io *w, int revents){
   char buffer[BUFFER_SIZE];
-  ssize_t read;
 
   if(!(EV_READ & revents)) {
     ev_io_stop(EV_A_ w);
@@ -129,30 +121,27 @@ void read_cb(struct ev_loop *loop, struct ev_io *w, int revents){
     (client_t *)
     (((char *) w) - offsetof(struct client_t, ev_read));
 
-  read = recv(w->fd, buffer, BUFFER_SIZE, 0);
-  if(read < 0) {
-    perror("read error");
-    return;
-  }
+  int total = 0;
+  int len = 0;
+  client->raw_req = NULL;
+  do {
+    len = read(client->fd, &buffer, BUFFER_SIZE);
+    total += len;
+    if (len < BUFFER_SIZE) buffer[len] = '\0';
+    if (client->raw_req == NULL) {
+      client->raw_req = malloc(len+1);
+      memcpy(client->raw_req, buffer, len);
+    } else {
+      client->raw_req = realloc(client->raw_req, total + 1);
+      memcpy(client->raw_req + total - len, buffer, len);
+    }
+  } while (len == BUFFER_SIZE);
 
-  if(read == 0) {
-    ev_io_stop(loop,w);
-    free(w);
-    perror("peer might closing");
-    total_clients --; // Decrement total_clients count
-    printf("%d client(s) connected.\n", total_clients);
-    return;
-  }
-
-  client->buf = (char *)malloc(read);
-  memcpy(client->buf, buffer, read);
-  const char *p = &buffer[0];
-  http_req_t *req = request(p);
+  http_req_t *req = request(client->raw_req);
   dump_request(req);
   client->request = req;
-  memset(buffer, 0, read);
+  memset(buffer, 0, BUFFER_SIZE);
 
-  // Initialize and start watcher to write client requests
   ev_io_stop(EV_A_ w);
   ev_io_init(&client->ev_write, write_cb, w->fd, EV_WRITE);
   ev_io_start(loop, &client->ev_write);
@@ -177,6 +166,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *w, int revents){
 
   send(client->fd, data, strlen(data), 0);
 
+  free(client->raw_req);
+  client->raw_req = NULL;
   free_request(req);
   free_response(resp);
   free(data);
